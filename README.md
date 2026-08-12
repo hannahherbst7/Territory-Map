@@ -5,8 +5,8 @@ shows which rep covers it; clicking opens a pre-addressed email.
 
 | Territory | Rep | States |
 |---|---|---|
-| West | John Cornejo | AK, AZ, AR, CA, CO, HI, ID, IL, IN, IA, KS, LA, MI, MN, MO, MT, NE, NV, NM, ND, OK, OR, SD, TX, UT, WA, WI, WY |
-| East | John Morrison | AL, CT, DE, DC, FL, GA, KY, ME, MD, MA, MS, NH, NJ, NY, NC, OH, PA, RI, SC, TN, VT, VA, WV |
+| West | John Cornejo | AK, AZ, AR, CA, CO, HI, ID, IL, IN, IA, KS, LA, MN, MO, MT, NE, NV, NM, ND, OK, OR, SD, TX, UT, WA, WI, WY |
+| East | John Morrison | AL, CT, DE, DC, FL, GA, KY, ME, MD, MA, MI, MS, NH, NJ, NY, NC, OH, PA, RI, SC, TN, VT, VA, WV |
 
 ## Files
 
