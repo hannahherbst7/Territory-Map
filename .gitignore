@@ -6,3 +6,6 @@
 
 # scratch / preview files
 _*.html
+
+# Claude Code launch config (machine-specific paths)
+.claude/launch.json
