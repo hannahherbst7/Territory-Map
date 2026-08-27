@@ -131,6 +131,36 @@
   .tag.urgent{background:var(--amber-soft);color:var(--amber)}
   .tag.routine{background:var(--green-soft);color:var(--green)}
 
+  /* vignette parser */
+  .vig{margin-top:36px;padding:24px 26px}
+  .vig h2{margin-bottom:2px}
+  .vig .hint{color:var(--muted);font-size:.88rem;margin:0 0 12px;max-width:70ch}
+  .vig textarea{
+    width:100%;min-height:110px;resize:vertical;padding:12px 14px;
+    border:1px solid var(--line);border-radius:10px;background:var(--field);
+    color:var(--ink);font:inherit;font-size:.92rem
+  }
+  .vig textarea:focus{outline:2px solid var(--red);outline-offset:1px}
+  .vig .actions{display:flex;align-items:center;gap:14px;margin-top:12px;flex-wrap:wrap}
+  .parsed{display:none;margin-top:14px}
+  .parsed .lbl{margin-bottom:8px}
+  .ptags{display:flex;flex-wrap:wrap;gap:6px}
+  .ptag{padding:4px 12px;border-radius:50px;font-size:.8rem;background:var(--red-soft);color:var(--red-ink);border:1px solid var(--red)}
+  .parsed .note{font-size:.82rem;color:var(--muted);margin:10px 0 0}
+
+  /* workup plan */
+  .workup{padding:16px 18px}
+  .workup ol{margin:10px 0 0;padding-left:0;list-style:none;counter-reset:wk}
+  .workup li{display:flex;gap:12px;padding:9px 0;border-top:1px dashed var(--line);counter-increment:wk}
+  .workup li::before{
+    content:counter(wk);flex:none;width:24px;height:24px;border-radius:50%;
+    background:var(--red);color:#fff;font-size:.8rem;font-weight:700;
+    display:flex;align-items:center;justify-content:center;margin-top:1px
+  }
+  .workup .tname{font-weight:600;font-size:.92rem}
+  .workup .covers{font-size:.84rem;color:var(--muted)}
+  .workup .covers b{color:var(--red-ink);font-weight:600}
+
   .foot{margin-top:48px;padding-top:18px;border-top:1px solid var(--line);font-size:.82rem;color:var(--muted);max-width:75ch}
   @media (prefers-reduced-motion:no-preference){ .bar i{transition:width .5s ease} }
 </style>
@@ -147,6 +177,25 @@
       learning reference, not a medical device, and is not a substitute for professional
       medical evaluation. If someone is having concerning chest pain right now, call 911.</div>
   </header>
+
+  <!-- ================= VIGNETTE PARSER ================= -->
+  <section class="card vig">
+    <div class="mini-rule"></div>
+    <h2>Paste a vignette</h2>
+    <p class="hint">Paste a question stem (UWorld-style paragraph) and the parser will pull out
+      the age, quality, radiation, risk factors, and vitals it recognizes, fill in the form
+      below, and run the differential. It's keyword-based, not smart — always check the filled
+      form and fix anything it missed or got wrong.</p>
+    <textarea id="vigText" placeholder="A 58-year-old man with a 30-pack-year smoking history presents with crushing substernal chest pressure radiating to his left arm that began while mowing the lawn. He is diaphoretic and nauseated. BP 148/92, pulse 104…"></textarea>
+    <div class="actions">
+      <button type="button" class="cta" id="parseBtn">Parse &amp; run</button>
+    </div>
+    <div class="parsed" id="parsedOut">
+      <span class="lbl">Recognized</span>
+      <div class="ptags" id="ptags"></div>
+      <p class="note" id="pnote"></p>
+    </div>
+  </section>
 
   <div class="cols">
     <!-- ================= INPUT FORM ================= -->
@@ -338,6 +387,34 @@ function runRanking(input, flaggedIds){
     .sort((a,b) => b.score - a.score);
 }
 
+/* ========================= WORKUP OVERLAP ================================
+   Collect the tests attached to every serious candidate (all red flags +
+   ranked conditions scoring >= 40%), then order them so a test shared by
+   several candidates comes first: tests covering an emergent candidate
+   beat tests that don't, more coverage beats less, and bedside speed
+   (tier in TESTS) breaks remaining ties.                                  */
+function buildWorkup(flags, ranked){
+  const cands = [];
+  for (const fl of flags){
+    const c = window.CONDITIONS.find(x => x.id === fl.condition);
+    cands.push({ name: fl.name, urgency: "emergent", tests: (c ? c.tests : fl.tests) || [] });
+  }
+  for (const c of ranked){
+    if (c.score >= 0.4 && c.matched.length) cands.push({ name: c.name, urgency: c.urgency, tests: c.tests || [] });
+  }
+  const byTest = {};
+  for (const cand of cands.slice(0, 6)){
+    for (const t of cand.tests){
+      const e = byTest[t] || (byTest[t] = { covers: [], emergent: false });
+      e.covers.push(cand.name);
+      if (cand.urgency === "emergent") e.emergent = true;
+    }
+  }
+  return Object.entries(byTest)
+    .map(([id, e]) => ({ id, ...(window.TESTS[id] || { name: id, tier: 9 }), ...e }))
+    .sort((a, b) => (b.emergent - a.emergent) || (b.covers.length - a.covers.length) || (a.tier - b.tier));
+}
+
 /* ============================ FORM → INPUT =============================== */
 function readInput(form){
   const input = {};
@@ -359,7 +436,7 @@ function readInput(form){
 const esc = s => s.replace(/[&<>"]/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
 const tag = u => `<span class="tag ${u}">${u}</span>`;
 
-function render(flags, ranked){
+function render(flags, ranked, workup){
   const out = [];
 
   if (flags.length){
@@ -373,6 +450,15 @@ function render(flags, ranked){
         ${cond ? `<p class="test"><b>Confirm/exclude with:</b> ${esc(cond.confirming_test)}</p>` : ""}
       </div>`);
     }
+  }
+
+  if (workup && workup.length){
+    out.push(`<div class="card workup"><header style="display:flex;justify-content:space-between;align-items:baseline">
+      <h3 style="margin:0;font-family:'Inter Tight','Inter',sans-serif;font-weight:500;font-size:1.05rem">Suggested workup order</h3></header>
+      <ol>${workup.map(t => `<li><div>
+        <div class="tname">${esc(t.name)}</div>
+        <div class="covers">${t.covers.length > 1 ? `<b>covers ${t.covers.length} candidates:</b> ` : "addresses: "}${esc(t.covers.join(", "))}</div>
+      </div></li>`).join("")}</ol></div>`);
   }
 
   const shown = ranked.filter(c => c.matched.length > 0);
@@ -409,8 +495,128 @@ form.addEventListener("submit", e => {
   const input = readInput(form);
   const flags = runRedFlags(input);
   const flaggedIds = new Set(flags.map(f => f.condition).filter(Boolean));
-  render(flags, runRanking(input, flaggedIds));
+  const ranked = runRanking(input, flaggedIds);
+  render(flags, ranked, buildWorkup(flags, ranked));
 });
+/* ========================== VIGNETTE PARSER ==============================
+   Keyword/pattern extraction from a pasted question stem. Deliberately
+   simple and transparent: every hit fills a visible form control, and the
+   "Recognized" list shows exactly what was extracted, so a wrong or missed
+   parse is easy to spot and fix by hand before re-running.
+
+   Negation-aware: a pattern is ignored when the same sentence fragment
+   before it contains "no / denies / without / never / non..." — so
+   "denies shortness of breath" does not check the SOB box.               */
+const NEG_RE = /\b(no|not|non|denies|denied|deny|without|never|negative|absent|unremarkable)\b/;
+function hit(text, re){
+  const m = re.exec(text);
+  if (!m) return null;
+  const clause = text.slice(0, m.index).split(/[.;]| but /).pop();
+  return NEG_RE.test(clause) ? null : m;
+}
+
+/* [what to set, value ("on" = checkbox), pattern, label for the Recognized list] */
+const PARSE_RULES = [
+  ["onset","sudden",   /\b(sudden|abrupt|acutely)/, "sudden onset"],
+  ["onset","gradual",  /\b(gradual|progressive|over the (past|last) (few |several )?(day|week|month))/, "gradual onset"],
+  ["quality","pressure",/\b(pressure|squeezing|tightness|heaviness|crushing|band[- ]like)/, "pressure/squeezing quality"],
+  ["quality","sharp",  /\b(sharp|stabbing|knife[- ]like)/, "sharp quality"],
+  ["quality","burning",/\bburning\b/, "burning quality"],
+  ["quality","tearing",/\b(tearing|ripping)/, "tearing quality"],
+  ["exertion","exertion",/\b((with|on|during) exertion|during exercise|while (mowing|shoveling|climbing|walking|running|jogging|exercising|lifting|playing))/, "exertional"],
+  ["exertion","rest",  /\bat rest\b/, "at rest"],
+  ["duration","constant",/\b(constant|continuous|unremitting)/, "constant pain"],
+  ["duration","episodic",/\b(episodi|comes and goes|intermittent)/, "episodic pattern"],
+  ["duration","brief", /\b((a few|several|lasting) seconds|seconds at a time)/, "brief (seconds)"],
+  ["pos.pleuritic","on",/\b(pleuritic|worse (with|on|when|during)[^.;]{0,30}(breath|inspiration)|deep breaths?|with inspiration)/, "pleuritic"],
+  ["pos.worse_lying","on",/\b(worse (when |while |on )?(lying|recumbent|supine)|lying (down|flat)[^.;]{0,25}worse|(relieved|better|improve\w*)[^.;]{0,35}(sitting up|leaning forward))/, "worse lying / better sitting forward"],
+  ["pos.palpation","on",/\b(reproduc\w*[^.;]{0,30}palpation|palpation[^.;]{0,30}reproduc|tender\w*[^.;]{0,25}(chest wall|palpation)|chest wall tender)/, "reproducible on palpation"],
+  ["pos.one_sided","on",/\b((left|right)[- ]sided|one[- ]sided|unilateral)/, "one-sided"],
+  ["rad.arm","on",     /radiat\w*[^.;]{0,40}\barm/, "radiates to arm"],
+  ["rad.jaw","on",     /radiat\w*[^.;]{0,40}\bjaw/, "radiates to jaw"],
+  ["rad.back","on",    /radiat\w*[^.;]{0,40}\bback\b/, "radiates to back"],
+  ["rad.shoulder","on",/\b(radiat\w*[^.;]{0,40}(scapula|shoulder)|between the (shoulder blades|scapulae))/, "radiates to shoulder blade"],
+  ["assoc.sob","on",   /\b(shortness of breath|short of breath|dyspnea|breathless|difficulty breathing)/, "shortness of breath"],
+  ["assoc.diaphoresis","on",/\b(diaphore|sweat)/, "diaphoresis"],
+  ["assoc.nausea","on",/\bnause/, "nausea"],
+  ["assoc.fever","on", /\b(fever|febrile)/, "fever"],
+  ["assoc.cough","on", /\bcough/, "cough"],
+  ["assoc.palpitations","on",/\bpalpitation/, "palpitations"],
+  ["assoc.dizziness","on",/\b(dizz|light-?headed|syncope|fainted|passed out|loss of consciousness)/, "dizziness/syncope"],
+  ["assoc.viral","on", /\b((recent|preceding|prior)[^.;]{0,30}(viral|upper respiratory|flu)|viral (illness|infection|prodrome)|upper respiratory (tract )?infection|\buri\b)/, "recent viral illness"],
+  ["assoc.vomiting","on",/\b((forceful|repeated|severe)[^.;]{0,20}vomit|retching|after vomiting)/, "forceful vomiting"],
+  ["assoc.trauma","on",/\b(trauma|injur|accident|\bfell\b)/, "recent trauma"],
+  ["hist.smoking","on",/\b(smok\w+|pack[- ]year)/, "smoking history"],
+  ["hist.cardiac","on",/\b(coronary artery disease|\bcad\b|myocardial infarction|stent|bypass|cabg|heart failure|known angina)/, "cardiac history"],
+  ["hist.clotting","on",/\b(\bdvt\b|deep vein thrombosis|hypercoagul|factor v|clotting disorder|oral contraceptive|\bocps?\b)/, "clot risk (DVT/hypercoagulable/OCP)"],
+  ["hist.cancer","on", /\b(cancer|malignan|chemotherapy|carcinoma)/, "cancer history"],
+  ["hist.surgery_immobility","on",/\b(recent surgery|post-?operative|(knee|hip) (replacement|arthroplasty)|long (flight|plane|car|bus)|prolonged (immobil|sitting|bed rest)|immobiliz|bedridden|\bcast\b)/, "recent surgery/immobility"],
+  ["hist.connective_tissue","on",/\b(marfan|ehlers|connective tissue)/, "connective tissue disease"],
+  ["hist.lung_disease","on",/\b(asthma|copd|emphysema|chronic obstructive)/, "asthma/COPD"],
+  ["hist.gerd","on",   /\b(gerd|acid reflux|reflux disease|frequent heartburn)/, "GERD history"],
+  ["exam.unequal_bp","on",/\b(pulse deficit|unequal (blood pressure|bp|pulses)|(blood pressure|bp)[^.;]{0,80}arm[^.;]{0,60}arm)/, "unequal arm BPs"],
+  ["exam.neck_veins","on",/\b(\bjvd\b|jugular venous distension|distended neck veins|elevated (jvp|jugular))/, "distended neck veins"]
+];
+
+function setControl(name, value){
+  const els = form.querySelectorAll(`[name="${name}"]`);
+  for (const el of els){
+    if (el.type === "checkbox") el.checked = true;
+    else if (el.type === "radio"){ if (el.value === value) el.checked = true; }
+    else el.value = value;
+  }
+}
+
+function parseVignette(raw){
+  const t = raw.toLowerCase().replace(/\s+/g, " ");
+  const found = [];
+  form.reset();
+
+  let m = hit(t, /(\d{1,3})[\s-]*(?:year|yr)[\s-]*old/);
+  if (m){ setControl("age", m[1]); found.push(`${m[1]}-year-old`); }
+  if (hit(t, /\b(woman|female|lady|girl)\b/) || (!/\b(man|male|boy|gentleman)\b/.test(t) && hit(t, /\b(she|her)\b/))){
+    setControl("sex", "female"); found.push("female");
+  } else if (hit(t, /\b(man|male|boy|gentleman)\b/) || hit(t, /\b(he|his)\b/)){
+    setControl("sex", "male"); found.push("male");
+  }
+
+  for (const [name, value, re, label] of PARSE_RULES){
+    /* radios: don't overwrite a value already set by an earlier rule
+       (e.g. "sharp" shouldn't win over "pressure" if both words appear) */
+    const current = form.querySelector(`[name="${name}"]:checked`);
+    if (current && current.type === "radio") continue;
+    if (hit(t, re)){ setControl(name, value); found.push(label); }
+  }
+
+  m = hit(t, /\b(\d{2,3})\s*\/\s*(\d{2,3})\b/);
+  if (m && +m[1] > +m[2] && +m[1] >= 60 && +m[1] <= 260){ setControl("vitals.sbp", m[1]); found.push(`SBP ${m[1]}`); }
+  m = hit(t, /\b(?:pulse|heart rate|hr)[^0-9]{0,15}(\d{2,3})/);
+  if (m){ setControl("vitals.hr", m[1]); found.push(`HR ${m[1]}`); }
+  m = hit(t, /\b(?:oxygen saturation|o2 sat\w*|spo2|pulse ox\w*|saturation)[^0-9]{0,15}(\d{2,3})/);
+  if (m){ setControl("vitals.spo2", m[1]); found.push(`SpO₂ ${m[1]}%`); }
+  m = hit(t, /\btemp\w*[^0-9]{0,15}(\d{2,3}(?:\.\d)?)/);
+  if (m){
+    const v = parseFloat(m[1]);
+    if ((v >= 38 && v <= 43) || (v >= 100.4 && v <= 110)){ setControl("assoc.fever", "on"); found.push(`fever (temp ${m[1]})`); }
+  }
+  return found;
+}
+
+document.getElementById("parseBtn").addEventListener("click", () => {
+  const raw = document.getElementById("vigText").value.trim();
+  const out = document.getElementById("parsedOut");
+  if (!raw){ out.style.display = "none"; return; }
+  const found = parseVignette(raw);
+  out.style.display = "block";
+  document.getElementById("ptags").innerHTML =
+    found.length ? found.map(l => `<span class="ptag">${esc(l)}</span>`).join("")
+                 : `<span class="ptag" style="background:var(--field);color:var(--muted);border-color:var(--line)">nothing recognized</span>`;
+  document.getElementById("pnote").textContent = found.length
+    ? "Check the form below — fix anything the parser missed or got wrong, then re-run."
+    : "No recognizable findings — fill in the form by hand instead.";
+  if (found.length) form.requestSubmit();
+});
+
 document.getElementById("resetBtn").addEventListener("click", () => {
   setTimeout(() => document.getElementById("results").innerHTML =
     `<div class="card placeholder"><div class="rule" style="margin:0 auto 14px"></div>

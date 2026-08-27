@@ -34,6 +34,26 @@
    condition (e.g. chest-wall tenderness points away from a heart attack).
    ========================================================================== */
 
+/* ---- TEST REGISTRY ------------------------------------------------------
+   Shared list of workup tests so the engine can spot OVERLAP: when several
+   candidate diagnoses are confirmed/excluded by the same test, that test is
+   suggested first. Each condition lists test ids in its `tests:` array.
+   `tier` is a rough bedside-speed rank used only to break ties
+   (1 = instant/bedside, 2 = quick labs/imaging, 3 = advanced imaging,
+   4 = outpatient/elective). */
+window.TESTS = {
+  exam:      { name: "Focused physical exam",           tier: 1 },
+  ekg:       { name: "12-lead EKG",                     tier: 1 },
+  echo:      { name: "Bedside echocardiogram",          tier: 2 },
+  cxr:       { name: "Chest X-ray",                     tier: 2 },
+  troponin:  { name: "Troponin (serial)",               tier: 2 },
+  ddimer:    { name: "D-dimer",                         tier: 2 },
+  ctpa:      { name: "CT pulmonary angiogram",          tier: 3 },
+  cta_chest: { name: "CT angiography of the chest",     tier: 3 },
+  ppi_trial: { name: "Antacid/PPI trial",               tier: 4 },
+  endoscopy: { name: "Endoscopy",                       tier: 4 }
+};
+
 /* ---- STAGE 1: RED FLAGS -------------------------------------------------
    These run first and are never skipped, no matter what Stage 2 says.
    Mirrors real ED triage: rule out the dangerous things before ranking
@@ -88,6 +108,7 @@ window.RED_FLAGS = [
   },
   {
     condition: null, /* tamponade isn't in the v1 ranked list yet — flag only */
+    tests: ["echo"],
     name: "Cardiac Tamponade",
     message: "Low blood pressure with distended neck veins suggests tamponade physiology (two of Beck's triad). Needs immediate evaluation with bedside echo.",
     when: { all: [
@@ -107,6 +128,7 @@ window.CONDITIONS = [
     name: "Heart Attack / Acute Coronary Syndrome",
     urgency: "emergent",
     confirming_test: "EKG + serial troponin",
+    tests: ["ekg", "troponin"],
     features: [
       { desc: "pressure/squeezing quality", when: { field: "quality", is: ["pressure"] } },
       { desc: "radiates to arm, jaw, or shoulder", when: { any: [ { flag: "rad.arm" }, { flag: "rad.jaw" }, { flag: "rad.shoulder" } ] } },
@@ -126,6 +148,7 @@ window.CONDITIONS = [
     name: "Aortic Dissection",
     urgency: "emergent",
     confirming_test: "CT angiography of the chest (or TEE if unstable)",
+    tests: ["cta_chest", "cxr"],
     features: [
       { desc: "sudden onset", when: { field: "onset", is: ["sudden"] } },
       { desc: "tearing/ripping quality", when: { field: "quality", is: ["tearing"] } },
@@ -141,6 +164,7 @@ window.CONDITIONS = [
     name: "Pulmonary Embolism",
     urgency: "emergent",
     confirming_test: "D-dimer if low risk; CT pulmonary angiogram if elevated or high risk",
+    tests: ["ddimer", "ctpa"],
     features: [
       { desc: "sudden onset", when: { field: "onset", is: ["sudden"] } },
       { desc: "pleuritic pain (worse with breathing)", when: { flag: "pos.pleuritic" } },
@@ -159,6 +183,7 @@ window.CONDITIONS = [
     name: "Pneumothorax",
     urgency: "emergent",
     confirming_test: "Upright chest X-ray (bedside ultrasound in unstable patients)",
+    tests: ["cxr"],
     features: [
       { desc: "sudden onset", when: { field: "onset", is: ["sudden"] } },
       { desc: "sharp/stabbing quality", when: { field: "quality", is: ["sharp"] } },
@@ -175,6 +200,7 @@ window.CONDITIONS = [
     name: "Pericarditis",
     urgency: "urgent",
     confirming_test: "EKG (diffuse ST elevation + PR depression) + echocardiogram",
+    tests: ["ekg", "echo"],
     features: [
       { desc: "sharp/stabbing quality", when: { field: "quality", is: ["sharp"] } },
       { desc: "worse lying down, better sitting forward", when: { flag: "pos.worse_lying" } },
@@ -189,6 +215,7 @@ window.CONDITIONS = [
     name: "GERD / Acid Reflux",
     urgency: "routine",
     confirming_test: "Trial of antacid/PPI; endoscopy only if alarm features",
+    tests: ["ppi_trial", "endoscopy"],
     features: [
       { desc: "burning quality", when: { field: "quality", is: ["burning"] } },
       { desc: "worse lying down", when: { flag: "pos.worse_lying" } },
@@ -206,6 +233,7 @@ window.CONDITIONS = [
     name: "Costochondritis",
     urgency: "routine",
     confirming_test: "Clinical exam — reproducible chest-wall tenderness; imaging usually unnecessary",
+    tests: ["exam"],
     features: [
       { desc: "sharp/stabbing quality", when: { field: "quality", is: ["sharp"] } },
       { desc: "pain reproducible by pressing on the chest wall", when: { flag: "pos.palpation" } },
@@ -220,6 +248,7 @@ window.CONDITIONS = [
     name: "Panic / Anxiety",
     urgency: "routine",
     confirming_test: "Diagnosis of exclusion — rule out cardiac and PE causes first; clinical interview",
+    tests: ["ekg", "exam"],
     features: [
       { desc: "sudden onset", when: { field: "onset", is: ["sudden"] } },
       { desc: "palpitations", when: { flag: "assoc.palpitations" } },
