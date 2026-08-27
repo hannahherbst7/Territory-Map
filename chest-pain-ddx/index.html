@@ -182,10 +182,10 @@
   <section class="card vig">
     <div class="mini-rule"></div>
     <h2>Paste a vignette</h2>
-    <p class="hint">Paste a question stem (UWorld-style paragraph) and the parser will pull out
-      the age, quality, radiation, risk factors, and vitals it recognizes, fill in the form
-      below, and run the differential. It's keyword-based, not smart — always check the filled
-      form and fix anything it missed or got wrong.</p>
+    <p class="hint">Paste or type a question stem (UWorld-style paragraph). The parser fills in
+      the form below <em>live as you type</em> — add more of the stem and the differential
+      updates. It's keyword-based, not smart, so check the filled form; corrections you make
+      by hand are kept as you keep typing.</p>
     <textarea id="vigText" placeholder="A 58-year-old man with a 30-pack-year smoking history presents with crushing substernal chest pressure radiating to his left arm that began while mowing the lawn. He is diaphoretic and nauseated. BP 148/92, pulse 104…"></textarea>
     <div class="actions">
       <button type="button" class="cta" id="parseBtn">Parse &amp; run</button>
@@ -497,6 +497,7 @@ form.addEventListener("submit", e => {
   const flaggedIds = new Set(flags.map(f => f.condition).filter(Boolean));
   const ranked = runRanking(input, flaggedIds);
   render(flags, ranked, buildWorkup(flags, ranked));
+  hasRun = true;
 });
 /* ========================== VIGNETTE PARSER ==============================
    Keyword/pattern extraction from a pasted question stem. Deliberately
@@ -602,22 +603,75 @@ function parseVignette(raw){
   return found;
 }
 
-document.getElementById("parseBtn").addEventListener("click", () => {
-  const raw = document.getElementById("vigText").value.trim();
+/* ---- live parsing + manual overrides ------------------------------------
+   The textarea re-parses (debounced) on every keystroke or paste, so the
+   form and differential fill in as the vignette grows. Because each parse
+   rebuilds the form from the text, hand corrections would be lost — so any
+   control the user touches directly is recorded in `overrides` and
+   re-applied after every parse, letting corrections stick while typing
+   continues. Overrides are cleared when the vignette is largely deleted
+   (a new case) or the form is cleared.                                    */
+function debounce(fn, ms){ let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+const overrides = new Map();
+let hasRun = false;
+function recordOverride(e){
+  const el = e.target;
+  if (!el.name) return;
+  if (el.type === "checkbox") overrides.set(el.name, { checked: el.checked });
+  else overrides.set(el.name, { value: el.value });
+  if (hasRun) liveSubmit();
+}
+form.addEventListener("change", recordOverride);
+form.addEventListener("input", e => { if (e.target.type === "number") recordOverride(e); });
+const liveSubmit = debounce(() => form.requestSubmit(), 250);
+
+function applyOverrides(){
+  for (const [name, o] of overrides){
+    for (const el of form.querySelectorAll(`[name="${CSS.escape(name)}"]`)){
+      if (el.type === "checkbox") el.checked = !!o.checked;
+      else if (el.type === "radio") el.checked = (el.value === o.value);
+      else el.value = o.value;
+    }
+  }
+}
+
+const vigText = document.getElementById("vigText");
+function runParse(){
+  const raw = vigText.value.trim();
   const out = document.getElementById("parsedOut");
   if (!raw){ out.style.display = "none"; return; }
   const found = parseVignette(raw);
+  applyOverrides();
   out.style.display = "block";
   document.getElementById("ptags").innerHTML =
     found.length ? found.map(l => `<span class="ptag">${esc(l)}</span>`).join("")
-                 : `<span class="ptag" style="background:var(--field);color:var(--muted);border-color:var(--line)">nothing recognized</span>`;
+                 : `<span class="ptag" style="background:var(--field);color:var(--muted);border-color:var(--line)">nothing recognized yet</span>`;
   document.getElementById("pnote").textContent = found.length
-    ? "Check the form below — fix anything the parser missed or got wrong, then re-run."
-    : "No recognizable findings — fill in the form by hand instead.";
-  if (found.length) form.requestSubmit();
-});
+    ? "Filled in below — fix anything the parser missed or got wrong; your corrections are kept."
+    : "No recognizable findings yet — keep typing, or fill in the form by hand.";
+  if (found.length || hasRun) form.requestSubmit();
+}
+
+let lastParsed = "";
+const liveParse = debounce(() => {
+  const raw = vigText.value.trim();
+  if (!raw){ overrides.clear(); lastParsed = ""; return; }
+  /* a large deletion means a new vignette was pasted over the old one —
+     stale hand corrections shouldn't carry across cases */
+  if (raw.length < lastParsed.length * 0.6) overrides.clear();
+  lastParsed = raw;
+  runParse();
+}, 400);
+vigText.addEventListener("input", liveParse);
+document.getElementById("parseBtn").addEventListener("click", runParse);
 
 document.getElementById("resetBtn").addEventListener("click", () => {
+  overrides.clear();
+  hasRun = false;
+  lastParsed = "";
+  vigText.value = "";
+  document.getElementById("parsedOut").style.display = "none";
   setTimeout(() => document.getElementById("results").innerHTML =
     `<div class="card placeholder"><div class="rule" style="margin:0 auto 14px"></div>
      Fill in the symptom pattern and run the differential.<br>
